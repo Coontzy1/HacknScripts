@@ -1,0 +1,4 @@
+# AdminScripts
+'''
+Repository for schenanigans
+'''
