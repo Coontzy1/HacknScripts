@@ -80,3 +80,30 @@ if [ "$webPortOpen" == "y" ]; then
 else
     echo "No web port open. Skipping additional scans."
 fi
+
+echo "Is SMB open? [y/n]"
+read SMBOpen 
+
+# FFUF SCANS FOR DIRECTORIES AND VHOSTS
+if [ "$SMBOpen" == "y" ]; then
+
+    xdotool key Ctrl+Shift+T
+    xdotool type --delay 50 "echo -e '\033[1;31mANON ACCESS NETEXEC\033[0m' && netexec smb $IP -u '' -p '' && echo -e '\033[1;31mSMB SHARES NETEXEC\033[0m' && netexec smb $IP --shares -u '' -p '' && echo -e '\033[1;31mENUM4LINUX\033[0m' && enum4linux-ng $IP -A"
+    xdotool key Return
+    renameTab "SMB :D"
+else
+    echo "Skipping SMB"
+fi
+
+echo "Is FTP open? [y/n] "
+read FTPOpen
+
+if [ "$FTPOpen" == "y" ]; then
+
+    xdotool key Ctrl+Shift+T
+    xdotool type --delay 50 "ftp -a $IP"
+    xdotool key Return
+    renameTab "FTP"
+else
+    echo "Skipping FTP"
+fi
