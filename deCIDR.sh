@@ -3,6 +3,7 @@
 # You are going to need nmap installed ;)  
 # Hahahahahaha 2024-05-08 Austin Coontz @ #1
 # Run the script with ./deCIDR.sh to see usage and notes
+# Need to add more checks for bad IPs (experimental / reserved)
 
 #Colors
 BOLD="\033[1m"
@@ -49,8 +50,15 @@ main () { #main
     
     done
 
-    sort -uV deCIDRd.tmp >> deCIDRd.out
-    rm deCIDRd.tmp
+    #sort -uV deCIDRd.tmp >> deCIDRd.out
+    #rm deCIDRd.tmp
+
+    while read line; 
+        do f_check_IP $line
+    done < deCIDRd.tmp
+    sort -uV deCIDRd.unsorted >> deCIDRd.out
+    rm deCIDRd.tmp deCIDRd.unsorted
+
 
     echo "IP's have been deCIDRd into deCIDRd.out"
     echo "They're currently in a SORTED order. Make sure to rando them"
@@ -68,6 +76,28 @@ f_process_IP () {
 
     else 
         echo $1 >> deCIDRd.tmp
+    fi
+
+}
+
+f_check_IP () {
+    
+    if echo $1 | grep -q [a-zA-Z]; then
+        echo $1 >> deCIDRd.unsorted
+    else
+
+        first_octet=$(echo "$1" | cut -d '.' -f1)
+        second_octet=$(echo "$1" | cut -d '.' -f2)
+
+        if (( first_octet >= 224 )); then
+            return
+        fi
+        if [[ "$1" =~ ^169\.254\..* ]]; then
+            return
+        fi
+
+        echo "$1" >> deCIDRd.unsorted
+
     fi
 
 }
