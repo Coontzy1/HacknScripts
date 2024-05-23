@@ -4,9 +4,7 @@
 # This script will also need to run as SUDO but it uses passwordless sudo 
 
 # TODO?
-# Seems to be a problem with web shit and probably need to make a delay between things..........
-# Fix hostnames for ffuf and stuff and also add recrusive optioins..?
-# So if the hostnames available it's probably better to scan that > the IP address
+# add recrusive optioins..?
 
 # COLORS
 RED='\033[0;31m'
@@ -160,7 +158,6 @@ f_ftp_enum() {
 
 f_http_enum() {
     f_print_blue "Running HTTP Enumeration..."
-    f_print_red "If you didn't get many results, try switching wordslists."
 
     if [ -n "$HOSTNAME" ]; then
         xdotool key Ctrl+Shift+T; sleep 0.1
@@ -170,15 +167,14 @@ f_http_enum() {
     fi
 
     xdotool key Ctrl+Shift+T; sleep 0.1
-    xdotool type --delay 15 "ffuf -w /usr/share/wordlists/seclists/Discovery/Web-Content/raft-medium-directories.txt -u http://$1:$2/FUZZ"
+    xdotool type --delay 15 "ffuf -w /usr/share/wordlists/seclists/Discovery/Web-Content/raft-medium-directories.txt -u http://$1:$2/FUZZ  -mc all -ac"
     xdotool key Return
     f_rename_tab "Directories"
-    
+
     xdotool key Ctrl+Shift+T; sleep 0.1
-    xdotool type --delay 15 "ffuf -w /usr/share/wordlists/seclists/Discovery/Web-Content/raft-medium-files.txt -u http://$1:$2/FUZZ"
+    xdotool type --delay 15 "ffuf -w /usr/share/wordlists/seclists/Discovery/Web-Content/raft-medium-files.txt -u http://$1:$2/FUZZ -mc all -ac"
     xdotool key Return
     f_rename_tab "Files"
-
 }
 
 main
