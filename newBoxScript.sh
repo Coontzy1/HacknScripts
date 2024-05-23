@@ -1,8 +1,12 @@
 #!/bin/bash
 # :triangle: WARNING - This uses rustscan. If you do not have it gg go next
 # This script was made to run in Kali using qterminal -- Meaning it uses default wordlists and qterminal commands with xdotool
-# Seems to be a problem with web shit and probably need to make a delay between things..........
+# This script will also need to run as SUDO but it uses passwordless sudo 
 
+# TODO?
+# Seems to be a problem with web shit and probably need to make a delay between things..........
+# Fix hostnames for ffuf and stuff and also add recrusive optioins..?
+# So if the hostnames available it's probably better to scan that > the IP address
 
 # COLORS
 RED='\033[0;31m'
@@ -12,7 +16,9 @@ RESET='\033[0m'
 main() {
     f_banner #banner
     if [ "$UID" -ne 0 ]; then f_print_red "Run this script as sudo. Rustscan also needs to be installed as root because of nmap ports and stupid PATHs" && exit 1; fi #testing for permissions
-    read -s -p "Enter sudo password: " sudoPassword #reading in sudo password
+
+#    read -s -p "Enter sudo password: " sudoPassword #reading in sudo password
+
     echo
     read -p "Enter IP Address: " IP #reading in IP address
     read -p "Enter hostname, if you don't know it press [Enter]: " HOSTNAME 
@@ -20,25 +26,44 @@ main() {
 
     xdotool key Ctrl+Shift+T; sleep 0.5
     xdotool type --delay 15 "sudo /home/kali/.cargo/bin/rustscan --ulimit 8192 -a $IP -r 1-65535 -- -sSVC -T5 | tee -a RUSTSCAN.OUTPUT123"; xdotool key Return
-    xdotool type --delay 15 --clearmodifiers "$sudoPassword"; xdotool key Return
+  #  xdotool type --delay 15 --clearmodifiers "$sudoPassword"; xdotool key Return
     f_rename_tab "SCANNING"
 
     f_split_vertically
     sleep 2.5
     xdotool type --delay 15 "sudo nmap -sU $IP -F"; xdotool key Return
-    xdotool type --delay 15 --clearmodifiers "$sudoPassword"; xdotool key Return
+  #  xdotool type --delay 15 --clearmodifiers "$sudoPassword"; xdotool key Return
     
     sleep 15
     if grep -q "Open $IP:445$" RUSTSCAN.OUTPUT123 ; then f_smb_enum; fi #SMB 
     if grep -q "Open $IP:21$" RUSTSCAN.OUTPUT123 ; then f_ftp_enum; fi #FTP
 
     # These need some type of delay in between because runs too quickly
-    if grep -q "Open $IP:80$" RUSTSCAN.OUTPUT123 ; then sleep 5 && f_http_enum 80; fi #HTTP
-    if grep -q "Open $IP:443$" RUSTSCAN.OUTPUT123 ; then sleep 5 && f_http_enum 443; fi #HTTP
-    if grep -q "Open $IP:8080$" RUSTSCAN.OUTPUT123 ; then sleep 5 &&  f_http_enum 8080; fi #HTTP
-    if grep -q "Open $IP:8000$" RUSTSCAN.OUTPUT123 ; then sleep 5 &&  f_http_enum 8000; fi #HTTP
-    
-    
+    if [[ -z "$HOSTNAME" ]]; then
+        if grep -q "Open $IP:80$" RUSTSCAN.OUTPUT123 ; then sleep 5 && f_http_enum $IP 80; fi # HTTP
+        if grep -q "Open $IP:443$" RUSTSCAN.OUTPUT123 ; then sleep 5 && f_http_enum $IP 443; fi # HTTPS
+        if grep -q "Open $IP:8080$" RUSTSCAN.OUTPUT123 ; then sleep 5 && f_http_enum $IP 8080; fi # Alternative HTTP
+        if grep -q "Open $IP:8443$" RUSTSCAN.OUTPUT123 ; then sleep 5 && f_http_enum $IP 8443; fi # Alternative HTTPS
+        if grep -q "Open $IP:8000$" RUSTSCAN.OUTPUT123 ; then sleep 5 && f_http_enum $IP 8000; fi # Alternative HTTP
+        if grep -q "Open $IP:8888$" RUSTSCAN.OUTPUT123 ; then sleep 5 && f_http_enum $IP 8888; fi # Alternative HTTP
+        if grep -q "Open $IP:8081$" RUSTSCAN.OUTPUT123 ; then sleep 5 && f_http_enum $IP 8081; fi # Alternative HTTP
+        if grep -q "Open $IP:8082$" RUSTSCAN.OUTPUT123 ; then sleep 5 && f_http_enum $IP 8082; fi # Alternative HTTP
+        if grep -q "Open $IP:8880$" RUSTSCAN.OUTPUT123 ; then sleep 5 && f_http_enum $IP 8880; fi # Alternative HTTP
+        if grep -q "Open $IP:8181$" RUSTSCAN.OUTPUT123 ; then sleep 5 && f_http_enum $IP 8181; fi # Alternative HTTP
+    else
+        if grep -q "Open $IP:80$" RUSTSCAN.OUTPUT123 ; then sleep 5 && f_http_enum $HOSTNAME 80; fi # HTTP
+        if grep -q "Open $IP:443$" RUSTSCAN.OUTPUT123 ; then sleep 5 && f_http_enum $HOSTNAME 443; fi # HTTPS
+        if grep -q "Open $IP:8080$" RUSTSCAN.OUTPUT123 ; then sleep 5 && f_http_enum $HOSTNAME 8080; fi # Alternative HTTP
+        if grep -q "Open $IP:8443$" RUSTSCAN.OUTPUT123 ; then sleep 5 && f_http_enum $HOSTNAME 8443; fi # Alternative HTTPS
+        if grep -q "Open $IP:8000$" RUSTSCAN.OUTPUT123 ; then sleep 5 && f_http_enum $HOSTNAME 8000; fi # Alternative HTTP
+        if grep -q "Open $IP:8888$" RUSTSCAN.OUTPUT123 ; then sleep 5 && f_http_enum $HOSTNAME 8888; fi # Alternative HTTP
+        if grep -q "Open $IP:8081$" RUSTSCAN.OUTPUT123 ; then sleep 5 && f_http_enum $HOSTNAME 8081; fi # Alternative HTTP
+        if grep -q "Open $IP:8082$" RUSTSCAN.OUTPUT123 ; then sleep 5 && f_http_enum $HOSTNAME 8082; fi # Alternative HTTP
+        if grep -q "Open $IP:8880$" RUSTSCAN.OUTPUT123 ; then sleep 5 && f_http_enum $HOSTNAME 8880; fi # Alternative HTTP
+        if grep -q "Open $IP:8181$" RUSTSCAN.OUTPUT123 ; then sleep 5 && f_http_enum $HOSTNAME 8181; fi # Alternative HTTP
+    fi
+
+    rm RUSTSCAN.OUTPUT123
 
 }
 
@@ -139,19 +164,18 @@ f_http_enum() {
 
     if [ -n "$HOSTNAME" ]; then
         xdotool key Ctrl+Shift+T; sleep 0.1
-        xdotool type --delay 15 "ffuf -w /usr/share/wordlists/seclists/Discovery/DNS/subdomains-top1million-110000.txt -u http://$IP:$1 -H "Host: FUZZ.$HOSTNAME" -mc all -ac"
+        xdotool type --delay 15 "ffuf -w /usr/share/wordlists/seclists/Discovery/DNS/subdomains-top1million-110000.txt -u http://$1:$2 -H 'Host: FUZZ.$HOSTNAME' -mc all -ac"
         xdotool key Return
         f_rename_tab "VHosts"
     fi
 
     xdotool key Ctrl+Shift+T; sleep 0.1
-    xdotool type --delay 15 "ffuf -w /usr/share/wordlists/seclists/Discovery/Web-Content/raft-medium-directories.txt -u http://$IP:$1/FUZZ"
+    xdotool type --delay 15 "ffuf -w /usr/share/wordlists/seclists/Discovery/Web-Content/raft-medium-directories.txt -u http://$1:$2/FUZZ"
     xdotool key Return
     f_rename_tab "Directories"
-
     
     xdotool key Ctrl+Shift+T; sleep 0.1
-    xdotool type --delay 15 "ffuf -w /usr/share/wordlists/seclists/Discovery/Web-Content/raft-medium-files.txt -u http://$IP:$1/FUZZ"
+    xdotool type --delay 15 "ffuf -w /usr/share/wordlists/seclists/Discovery/Web-Content/raft-medium-files.txt -u http://$1:$2/FUZZ"
     xdotool key Return
     f_rename_tab "Files"
 
