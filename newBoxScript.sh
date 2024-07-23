@@ -160,21 +160,31 @@ f_http_enum() {
     f_print_blue "Running HTTP Enumeration..."
 
     if [ -n "$HOSTNAME" ]; then
-        xdotool key Ctrl+Shift+T; sleep 0.1
+        xdotool key Ctrl+Shift+T; sleep 0.2
         xdotool type --delay 15 "ffuf -w /usr/share/wordlists/seclists/Discovery/DNS/subdomains-top1million-110000.txt -u http://$1:$2 -H 'Host: FUZZ.$HOSTNAME' -mc all -ac"
         xdotool key Return
         f_rename_tab "VHosts"
     fi
 
-    xdotool key Ctrl+Shift+T; sleep 0.1
+    xdotool key Ctrl+Shift+T; sleep 0.2
     xdotool type --delay 15 "ffuf -w /usr/share/wordlists/seclists/Discovery/Web-Content/raft-medium-directories.txt -u http://$1:$2/FUZZ  -mc all -ac"
     xdotool key Return
     f_rename_tab "Directories"
 
-    xdotool key Ctrl+Shift+T; sleep 0.1
+    xdotool key Ctrl+Shift+T; sleep 0.2
     xdotool type --delay 15 "ffuf -w /usr/share/wordlists/seclists/Discovery/Web-Content/raft-medium-files.txt -u http://$1:$2/FUZZ -mc all -ac"
     xdotool key Return
     f_rename_tab "Files"
+
+    if [ -n "$HOSTNAME" ]; then #Second VHOST Enum for finding references to subdomains within files 
+        xdotool key Ctrl+Shift+T; sleep 0.2
+        xdotool type --delay 15 "wget --mirror --convert-links --adjust-extension --page-requisites http://$HOSTNAME:$2/ && echo 'Cleanup Directory Needed\n Potential Subdomains:' && grep -roE '[a-zA-Z0-9-]+\.$HOSTNAME'"
+        #xdotool type --delay 15 ""
+        #xdotool type --delay 15 ""
+        xdotool key Return
+        f_rename_tab "VHosts2"
+    fi
+
 }
 
 main
