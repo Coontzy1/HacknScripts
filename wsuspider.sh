@@ -31,6 +31,7 @@ EOF
 
 # Default banner behavior
 hacking_the_matrix=1
+PARSE_ONLY=0
 
 # Usage/help
 usage() {
@@ -41,40 +42,41 @@ usage() {
     echo -e "  -u               or --user|--username         Username"
     echo -e "  -p               or --password|--Password     Password"
     echo -e "  -n               or --no-banner|-no-banner    Don't show the banner"
+    echo -e "  -e          or --parse|--parse-only      Only parse existing loot, skip manspider"
     echo -e "  -h               or --help                    Show this help menu"
     exit 1
 }
 
-# Parse args (case-insensitive)
+# Parse args (handle both upper and lower case explicitly)
 while [[ $# -gt 0 ]]; do
-    key=$(echo "$1" | tr '[:upper:]' '[:lower:]')
-    case "$key" in
-        -dc-ip|--dc-ip)
+    case "$1" in
+        -dc-ip|--dc-ip|-DC-IP|--DC-IP)
             DCIP="$2"; shift 2;;
-        -d|--domain)
+        -d|--domain|-D|--Domain|--DOMAIN)
             DOMAIN="$2"; shift 2;;
-        -u|--user|--username)
+        -u|--user|--username|-U|--User|--Username|--USERNAME)
             USERNAME="$2"; shift 2;;
-        -p|--password|--password)
+        -p|--password|-P|--Password|--PASSWORD)
             PASSWORD="$2"; shift 2;;
-        -n|--no-banner|-no-banner)
+        -n|--no-banner|-no-banner|-N|--No-Banner|--NO-BANNER)
             hacking_the_matrix=2; shift;;
-        -h|--help)
-            usage;;
-        -*)
-            echo -e "${RED}[-] Unknown option:${NC} $1"
+        -e|-E|--parse|--parse-only|--Parse|--Parse-Only|--PARSE|--PARSE-ONLY)
+            PARSE_ONLY=1; shift;;
+        -h|--help|-H|--Help|--HELP)
             usage;;
         *)
-            shift;;
+            echo -e "${RED}[-] Unknown option:${NC} $1"
+            usage;;
     esac
 done
 
-# Validate required args
-if [[ -z "$DCIP" || -z "$DOMAIN" || -z "$USERNAME" || -z "$PASSWORD" ]]; then
-    usage
+if [[ "$PARSE_ONLY" -eq 0 ]]; then
+    if [[ -z "$DCIP" || -z "$DOMAIN" || -z "$USERNAME" || -z "$PASSWORD" ]]; then
+        usage
+    fi
 fi
 
-# Show banner(s)
+# Show banner
 for ((i=1; i<=hacking_the_matrix; i++)); do
     print_banner
 done
@@ -90,8 +92,13 @@ echo "WSUS Summary - Generated on $(date)" >> "$SUMMARY"
 # =============================
 # Step 0: Run manspider
 # =============================
-echo -e "${BLUE}[*] Step 0:${NC} Running manspider against ${CYAN}$DCIP${NC}..."
-manspider "$DCIP" -d "$DOMAIN" -u "$USERNAME" -p "$PASSWORD" --sharenames SYSVOL -f Registry -e pol > /dev/null 2>&1
+# Modify manspider step
+if [[ "$PARSE_ONLY" -eq 0 ]]; then
+    echo -e "${BLUE}[*] Step 0:${NC} Running manspider against ${CYAN}$DCIP${NC}..."
+    manspider "$DCIP" -d "$DOMAIN" -u "$USERNAME" -p "$PASSWORD" --sharenames SYSVOL -f Registry -e pol > /dev/null 2>&1
+else
+    echo -e "${YELLOW}[!] Parse-only mode enabled. Skipping manspider...${NC}"
+fi
 
 # =============================
 # Step 1: Decode *Machine_Registry.pol files
