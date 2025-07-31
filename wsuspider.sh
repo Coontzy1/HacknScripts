@@ -33,6 +33,22 @@ EOF
 hacking_the_matrix=1
 PARSE_ONLY=0
 
+check_regpol() {
+    if ! command -v regpol >/dev/null 2>&1; then
+        echo -e "${YELLOW}[!] regpol not found. Would you like to install it? (y/N)${NC}"
+        read -r response
+        if [[ "$response" =~ ^[Yy]$ ]]; then
+            echo -e "${BLUE}[*] Installing regpol...${NC}"
+            proxychains -q pipx install regpol
+        else
+            echo -e "${RED}[-] regpol is required. Install with: pipx install regpol${NC}"
+            exit 1
+        fi
+    fi
+}
+
+check_regpol
+
 # Usage/help
 usage() {
     echo -e "${YELLOW}Usage:${NC} $0 -dc-ip <IP> -d <DOMAIN> -u <USERNAME> -p <PASSWORD> --no-banner"
