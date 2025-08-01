@@ -2,7 +2,7 @@
 
 # =============================
 # WSUS Registry Policy Extractor via manspider
-# Author : Austin Coontz
+# Author : Austin Coontz + DennisTheMenace
 # Date   : July 2025
 # =============================
 
@@ -26,13 +26,14 @@ print_banner() {
                         |_|                                
 
 EOF
-    echo -e "Austin Coontz${NC}"
+    echo -e "Austin Coontz + DennisTheMenace${NC}"
 }
 
 # Default banner behavior
 hacking_the_matrix=1
 PARSE_ONLY=0
 
+# Dependency checks
 check_regpol() {
     if ! command -v regpol >/dev/null 2>&1; then
         echo -e "${YELLOW}[!] regpol not found. Would you like to install it? (y/N)${NC}"
@@ -47,38 +48,53 @@ check_regpol() {
     fi
 }
 
+check_manspider() {
+    if ! command -v manspider >/dev/null 2>&1; then
+        echo -e "${YELLOW}[!] manspider not found. Would you like to install it? (y/N)${NC}"
+        read -r response
+        if [[ "$response" =~ ^[Yy]$ ]]; then
+            echo -e "${BLUE}[*] Installing manspider...${NC}"
+            proxychains -q pipx install manspider
+        else
+            echo -e "${RED}[-] manspider is required. Install with: pipx install manspider${NC}"
+            exit 1
+        fi
+    fi
+}
+
+check_manspider
 check_regpol
 
 # Usage/help
 usage() {
-    echo -e "${YELLOW}Usage:${NC} $0 -dc-ip <IP> -d <DOMAIN> -u <USERNAME> -p <PASSWORD> --no-banner"
+    echo -e "${YELLOW}Usage:${NC} ${0##*/} -dc-ip <IP> -d <DOMAIN> -u <USERNAME> -p <PASSWORD> --no-banner"
     echo -e "${YELLOW}Options:${NC}"
     echo -e "  -dc-ip           or --dc-ip <IP>             Domain Controller IP"
     echo -e "  -d               or --domain|--Domain         Domain name"
     echo -e "  -u               or --user|--username         Username"
     echo -e "  -p               or --password|--Password     Password"
     echo -e "  -n               or --no-banner|-no-banner    Don't show the banner"
-    echo -e "  -e          or --parse|--parse-only      Only parse existing loot, skip manspider"
+    echo -e "  -e               or --parse-only              Only parse existing loot"
     echo -e "  -h               or --help                    Show this help menu"
     exit 1
 }
 
-# Parse args (handle both upper and lower case explicitly)
+# Arg parsing
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -dc-ip|--dc-ip|-DC-IP|--DC-IP)
             DCIP="$2"; shift 2;;
-        -d|--domain|-D|--Domain|--DOMAIN)
+        -d|--domain|--Domain|--DOMAIN)
             DOMAIN="$2"; shift 2;;
-        -u|--user|--username|-U|--User|--Username|--USERNAME)
+        -u|--user|--username|--User|--Username|--USERNAME)
             USERNAME="$2"; shift 2;;
-        -p|--password|-P|--Password|--PASSWORD)
+        -p|--password|--Password|--PASSWORD)
             PASSWORD="$2"; shift 2;;
-        -n|--no-banner|-no-banner|-N|--No-Banner|--NO-BANNER)
+        -n|--no-banner|--No-Banner|--NO-BANNER)
             hacking_the_matrix=2; shift;;
-        -e|-E|--parse|--parse-only|--Parse|--Parse-Only|--PARSE|--PARSE-ONLY)
+        -e|--parse-only|--Parse-Only|--PARSE-ONLY)
             PARSE_ONLY=1; shift;;
-        -h|--help|-H|--Help|--HELP)
+        -h|--help|--Help|--HELP)
             usage;;
         *)
             echo -e "${RED}[-] Unknown option:${NC} $1"
@@ -97,36 +113,36 @@ for ((i=1; i<=hacking_the_matrix; i++)); do
     print_banner
 done
 
-# Setup
-LOOT_DIR="/root/.manspider/loot"
-OUTDIR="parsed_reg_files"
-SUMMARY="wsus_summary.txt"
+# Directory setup
+MAIN_DIR="$(pwd)"
+LOOT_DIR="${MAIN_DIR}/manspider"
+OUT_DIR="${MAIN_DIR}/parsed_reg_files"
+SUMMARY="${MAIN_DIR}/wsus_summary.txt"
 
-mkdir -p "$OUTDIR"
+mkdir -p "$LOOT_DIR"
+mkdir -p "$OUT_DIR"
 echo "WSUS Summary - Generated on $(date)" >> "$SUMMARY"
 
 # =============================
 # Step 0: Run manspider
 # =============================
-# Modify manspider step
 if [[ "$PARSE_ONLY" -eq 0 ]]; then
     echo -e "${BLUE}[*] Step 0:${NC} Running manspider against ${CYAN}$DCIP${NC}..."
-    manspider "$DCIP" -d "$DOMAIN" -u "$USERNAME" -p "$PASSWORD" --sharenames SYSVOL -f Registry -e pol > /dev/null 2>&1
+    manspider "$DCIP" -d "$DOMAIN" -u "$USERNAME" -p "$PASSWORD" \
+        --sharenames SYSVOL -f Registry -e pol -l "$LOOT_DIR" > /dev/null 2>&1
 else
     echo -e "${YELLOW}[!] Parse-only mode enabled. Skipping manspider...${NC}"
 fi
 
 # =============================
-# Step 1: Decode *Machine_Registry.pol files
+# Step 1: Decode Machine_Registry.pol files
 # =============================
 echo -e "${BLUE}[*] Step 1:${NC} Decoding Machine registry policy files..."
 find "$LOOT_DIR" -type f -iname '*_Machine_Registry.pol' | while read -r polfile; do
-    outfile="$OUTDIR/$(basename "$polfile" .pol).txt"
-    /root/.local/bin/regpol "$polfile" > "$outfile"
+    outfile="${OUT_DIR}/$(basename "$polfile" .pol).txt"
+    regpol "$polfile" > "$outfile"
     echo -e "${GREEN}[+] Decoded:${NC} $polfile -> $outfile"
 done
-
-cd "$OUTDIR" || exit 1
 
 # =============================
 # Step 2: Parse for WSUS values
@@ -143,28 +159,29 @@ dword_keys=(
   RebootRelaunchTimeout RebootRelaunchTimeoutEnabled IncludeRecommendedUpdates AutoInstallMinorUpdates
 )
 
-for file in *.txt; do
-    domain=$(echo "$file" | cut -d'_' -f3)
+# Process all decoded files
+for file in "$OUT_DIR"/*.txt; do
+    domain=$(basename "$file" | cut -d'_' -f1)
     gpoid=$(echo "$file" | sed -n 's/.*Policies_\([A-F0-9]\{32\}\)_Machine.*/\1/pI')
     label="$domain-$gpoid"
 
-    # REG_SZ
     for key in "${string_keys[@]}"; do
-        raw=$(grep -iaA4 "value: $key" "$file" | grep -ai 'data:' | head -1 | sed -E "s/^.*b'(.*)'/\1/")
+        val_string=""
+        raw=$(grep -aiA4 "value: $key" "$file" | grep -ai 'data:' | head -n1 | grep -ao "b'.*'" | cut -d"'" -f2)
         if [[ -n "$raw" ]]; then
-            val=$(python3 -c "import sys, ast; print(ast.literal_eval(f\"b'{sys.stdin.read().strip()}'\").decode('utf-16le'))" <<< "$raw" 2>/dev/null)
-            echo "$label - $key - $val" | tee -a "../$SUMMARY"
+            val_string=$(echo -e "$raw" | tr -d '\0')
+            echo "$label - $key - $val_string" | tee -a "$SUMMARY"
         fi
     done
 
-    # REG_DWORD
     for key in "${dword_keys[@]}"; do
-        raw=$(grep -iaA4 -P "value:\s*${key}\\b" "$file" | grep -aPo "data:\s+b'\K(.*)(?=')" | head -1)
+        val_int=""
+        raw=$(grep -aiA4 -P "value:\s*${key}\\b" "$file" | grep -aPo "data:\s+b'\K(.*)(?=')" | head -1)
         if [[ -n "$raw" ]]; then
-            decoded=$(python3 -c "import sys; print(int.from_bytes(bytes.fromhex(sys.stdin.read().replace('\\\\x','')), 'little'))" <<< "$raw" 2>/dev/null)
-            echo "$label - $key - $decoded" | tee -a "../$SUMMARY"
+            val_int=$(printf "$raw" | od -An -t u4 | xargs)
+            echo "$label - $key - $val_int" | tee -a "$SUMMARY"
         fi
     done
 done
 
-echo -e "${GREEN}[+] Complete.${NC} Parsed output saved to ${CYAN}$SUMMARY${NC}"
+echo -e "${GREEN}[+] Complete.${NC} Parsed output saved to ${CYAN}${SUMMARY}${NC}"
