@@ -128,8 +128,7 @@ echo "WSUS Summary - Generated on $(date)" >> "$SUMMARY"
 # =============================
 if [[ "$PARSE_ONLY" -eq 0 ]]; then
     echo -e "${BLUE}[*] Step 0:${NC} Running manspider against ${CYAN}$DCIP${NC}..."
-    manspider "$DCIP" -d "$DOMAIN" -u "$USERNAME" -p "$PASSWORD" \
-        --sharenames SYSVOL -f Registry -e pol -l "$LOOT_DIR" > /dev/null 2>&1
+    manspider "$DCIP" -d "$DOMAIN" -u "$USERNAME" -p "$PASSWORD" --sharenames SYSVOL -f Registry -e pol -l "$LOOT_DIR"
 else
     echo -e "${YELLOW}[!] Parse-only mode enabled. Skipping manspider...${NC}"
 fi
