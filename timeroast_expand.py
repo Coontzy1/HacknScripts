@@ -56,19 +56,16 @@ def emit_range(segs, lens, bases, strides, fmts, start, count, stop_evt, out_q):
     """Emit [start, start+count) expansions to out_q, respecting stop_evt."""
     n = len(lens)
     end = start + count
-    # Fast path: build incrementally without calling index_to_tuple each time.
-    # Start vector:
     vec = index_to_tuple(start, bases, strides)
-    for idx in range(start, end):
+    for _ in range(start, end):
         if stop_evt.is_set(): break
-        # build string
         parts = []
         for i in range(n):
             parts.append(segs[i])
             parts.append(fmts[i].format(vec[i]))
         parts.append(segs[-1])
         out_q.put(''.join(parts) + "\n")
-        # increment vec like an odometer (least significant position is the last run)
+        # odometer increment
         for k in range(n - 1, -1, -1):
             vec[k] += 1
             if vec[k] < bases[k]:
@@ -87,7 +84,7 @@ def emit_sequential(name, max_line, stop_evt, out_q):
 
 # -------- task handling ------------------------------------------------------
 # task types:
-#   ("LINE", raw_line)
+#   ("LINE", raw_line, max_line)
 #   ("CHUNK", segs, lens, bases, strides, fmts, start, count, name_for_log)
 
 def worker(in_q: mp.Queue, out_q: mp.Queue, stop_evt: mp.Event,
@@ -104,12 +101,10 @@ def worker(in_q: mp.Queue, out_q: mp.Queue, stop_evt: mp.Event,
 
         kind = task[0]
         if kind == "LINE":
-            # task = ("LINE", raw, max_line)
             _, raw, max_line = task
             emit_sequential(raw, max_line, stop_evt, out_q)
             name_for_log = raw.rstrip("\r\n")
         else:  # "CHUNK"
-            # task = ("CHUNK", segs, lens, bases, strides, fmts, start, count, name_for_log)
             _, segs, lens, bases, strides, fmts, start, count, name_for_log = task
             emit_range(segs, lens, bases, strides, fmts, start, count, stop_evt, out_q)
 
@@ -120,7 +115,7 @@ def worker(in_q: mp.Queue, out_q: mp.Queue, stop_evt: mp.Event,
     out_q.put(None)
 
 def writer(out_q: mp.Queue, out_path: Path, limit_bytes: int,
-           stop_evt: mp.Event, workers: int, start_size: int):
+           stop_evt: mp.Event, workers: int, start_size: int, line_counter: mp.Value):
     written = start_size
     done_markers = 0
     with out_path.open("ab", buffering=1024*1024) as fh:
@@ -137,6 +132,11 @@ def writer(out_q: mp.Queue, out_path: Path, limit_bytes: int,
                 continue
             fh.write(b)
             written += len(b)
+            # count lines appended
+            nl = b.count(b"\n")
+            if nl:
+                with line_counter.get_lock():
+                    line_counter.value += nl
             # flush every 10MB boundary to show progress on disk
             if (written // (10*1024*1024)) != ((written - len(b)) // (10*1024*1024)):
                 fh.flush()
@@ -160,6 +160,8 @@ def main():
                     help="if estimated combos ≥ this, split into chunks (default 1,000,000)")
     ap.add_argument("--chunk-size", type=int, default=100_000,
                     help="target expansions per chunk (default 100,000)")
+    ap.add_argument("--progress-every", type=int, default=0,
+                    help="print progress every N input lines (default 0 = off)")
     ap.add_argument("-v","--verbose", action="store_true",
                     help="log slow/chunking/truncation info to stderr")
     ap.add_argument("--slow-threshold", type=float, default=3.0,
@@ -170,12 +172,13 @@ def main():
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
+    t_start = time.perf_counter()
     start_size = out_path.stat().st_size if out_path.exists() else 0
     if start_size >= args.limit:
         sys.stderr.write(f"[!] Output already at/over limit ({start_size} bytes). Exiting.\n")
         return
 
-    # context (prefer fork on *nix)
+    # context (prefer fork on *nix; Windows will use spawn)
     try:
         ctx = mp.get_context("fork")
     except ValueError:
@@ -184,9 +187,14 @@ def main():
     in_q  = ctx.Queue(maxsize=4000)
     out_q = ctx.Queue(maxsize=8192)
     stop_evt = ctx.Event()
+    line_counter = ctx.Value('Q', 0)  # 64-bit count of appended lines
 
     # writer
-    wproc = ctx.Process(target=writer, args=(out_q, out_path, args.limit, stop_evt, args.workers, start_size), daemon=True)
+    wproc = ctx.Process(
+        target=writer,
+        args=(out_q, out_path, args.limit, stop_evt, args.workers, start_size, line_counter),
+        daemon=True
+    )
     wproc.start()
 
     # workers
@@ -196,56 +204,84 @@ def main():
         p.start()
         workers.append(p)
 
-    # feeder: stream input, decide LINE vs CHUNK tasks
-    with in_path.open("r", encoding="utf-8", errors="replace") as fh:
-        for raw in fh:
-            if stop_evt.is_set(): break
-            name = raw.rstrip("\r\n")
-            segs, lens = split_line(name)
-            if not lens:
-                in_q.put(("LINE", raw, args.max_line))
-                continue
+    fed = 0  # input lines read
 
-            est = combos_count(lens)
-            if args.verbose and est > args.max_line:
-                sys.stderr.write(f"[truncate] '{name}': combos≈{est:,} -> capped at {args.max_line:,}\n")
+    try:
+        # feeder: stream input, decide LINE vs CHUNK tasks
+        with in_path.open("r", encoding="utf-8", errors="replace") as fh:
+            for raw in fh:
+                if stop_evt.is_set():
+                    break
+                name = raw.rstrip("\r\n")
+                segs, lens = split_line(name)
+                if not lens:
+                    in_q.put(("LINE", raw, args.max_line))
+                else:
+                    est = combos_count(lens)
+                    if args.verbose and est > args.max_line:
+                        sys.stderr.write(f"[truncate] '{name}': combos≈{est:,} -> capped at {args.max_line:,}\n")
+                    total_emit = min(est, args.max_line)
+                    if total_emit < args.chunk_threshold or args.workers <= 1:
+                        in_q.put(("LINE", raw, args.max_line))
+                    else:
+                        bases, strides, fmts = make_bases_strides_fmts(lens)
+                        chunks = math.ceil(total_emit / args.chunk_size)
+                        if args.verbose:
+                            sys.stderr.write(f"[chunk] '{name}': total={total_emit:,}, chunks={chunks} (size≈{args.chunk_size:,})\n")
+                        start = 0
+                        remaining = total_emit
+                        while remaining > 0 and not stop_evt.is_set():
+                            this = min(args.chunk_size, remaining)
+                            in_q.put(("CHUNK", segs, lens, bases, strides, fmts, start, this, name))
+                            start += this
+                            remaining -= this
 
-            total_emit = min(est, args.max_line)
-
-            # small jobs: hand off as a single LINE to one worker
-            if total_emit < args.chunk_threshold or args.workers <= 1:
-                in_q.put(("LINE", raw, args.max_line))
-                continue
-
-            # heavy job: precompute bases/strides/fmts and enqueue CHUNKs
-            bases, strides, fmts = make_bases_strides_fmts(lens)
-            chunks = math.ceil(total_emit / args.chunk_size)
-            if args.verbose:
-                sys.stderr.write(f"[chunk] '{name}': total={total_emit:,}, chunks={chunks} (size≈{args.chunk_size:,})\n")
-
-            start = 0
-            remaining = total_emit
-            while remaining > 0 and not stop_evt.is_set():
-                this = min(args.chunk_size, remaining)
-                in_q.put(("CHUNK", segs, lens, bases, strides, fmts, start, this, name))
-                start += this
-                remaining -= this
-
-    # close input
-    for _ in workers:
-        in_q.put(None)
-
-    # wait workers then writer
-    for p in workers:
-        p.join()
-
-    wproc.join(timeout=2.0)
-    if wproc.is_alive():
+                fed += 1
+                if args.progress_every and (fed % args.progress_every == 0):
+                    appended = line_counter.value
+                    elapsed = time.perf_counter() - t_start
+                    rate_in  = fed / elapsed if elapsed > 0 else 0.0
+                    rate_out = appended / elapsed if elapsed > 0 else 0.0
+                    sys.stderr.write(f"[=] progress: in={fed:,} out≈{appended:,} "
+                                     f"({rate_in:,.0f} in/s, {rate_out:,.0f} out/s)\n")
+    except KeyboardInterrupt:
+        sys.stderr.write("\n[!] Ctrl-C received — stopping...\n")
         stop_evt.set()
-        wproc.terminate()
+    finally:
+        # close input
+        for _ in workers:
+            in_q.put(None)
+        # wait workers then writer
+        for p in workers:
+            p.join()
+        wproc.join(timeout=2.0)
+        if wproc.is_alive():
+            stop_evt.set()
+            wproc.terminate()
 
-    if args.verbose:
-        sys.stderr.write("[+] Done.\n")
+    # --- summary ---
+    t_end = time.perf_counter()
+    try:
+        end_size = out_path.stat().st_size if out_path.exists() else start_size
+    except Exception:
+        end_size = start_size
+    appended_lines = line_counter.value
+    delta_bytes = end_size - start_size
+    elapsed = t_end - t_start
+    rate_out = appended_lines / elapsed if elapsed > 0 else 0.0
+    exp_factor = (appended_lines / fed) if fed > 0 else 0.0
+
+    print("\n=== Summary ===")
+    print(f"Start time              : {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(t_start))}")
+    print(f"End time                : {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(t_end))}")
+    print(f"Elapsed time            : {elapsed:.2f} s")
+    print(f"Input lines read        : {fed:,}")
+    print(f"Output lines appended   : {appended_lines:,}")
+    if fed:
+        print(f"Expansion factor        : {exp_factor:,.2f}x per input line")
+    print(f"Output file size        : {start_size:,} → {end_size:,} bytes (Δ {delta_bytes:,})")
+    print(f"Throughput (lines out)  : {rate_out:,.0f} lines/s")
+    print("Good luck!")
 
 if __name__ == "__main__":
     mp.freeze_support()
