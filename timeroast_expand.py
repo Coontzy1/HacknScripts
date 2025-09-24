@@ -3,6 +3,15 @@ import argparse, os, re, sys, time, math
 from pathlib import Path
 import multiprocessing as mp
 
+# ==============================================================================
+# Parallel, streaming expansion of digit runs in names
+# - Deduplicates by digit-run pattern (e.g., DESKTOP####) so repeated variants
+#   like DESKTOP1234 / DESKTOP0001 don't trigger duplicate expansions.
+# - Also writes every original input line exactly once so the raw candidates
+#   are guaranteed to be present even if expansion is capped by --max-line.
+# - Splits large expansion spaces into chunks and processes them in parallel.
+# ==============================================================================
+
 DIGITS_RE = re.compile(r'\d+')
 
 # -------- size parsing (K/M/G or raw bytes) ----------------------------------
@@ -16,14 +25,19 @@ def parse_size(s: str) -> int:
 
 # -------- line analysis ------------------------------------------------------
 def split_line(name: str):
-    """Return (segs, lens) where lens are lengths of digit runs and segs are text parts between them."""
+    """
+    Return (segs, lens) where:
+      - segs are the non-digit parts between digit runs
+      - lens are lengths of each digit run
+    Example: 'DESKTOP1234-XY09' -> segs=['DESKTOP', '-XY', ''], lens=[4,2]
+    """
     name = name.rstrip("\r\n")
     segs, lens, pos = [], [], 0
     for m in DIGITS_RE.finditer(name):
         segs.append(name[pos:m.start()])
         lens.append(len(m.group(0)))
         pos = m.end()
-    segs.append(name[pos:])  # tail
+    segs.append(name[pos:])  # tail after last run
     return segs, lens
 
 def combos_count(lens):
@@ -51,6 +65,18 @@ def index_to_tuple(idx, bases, strides):
         vals.append((idx // s) % b)
     return vals
 
+# -------- pattern helpers ----------------------------------------------------
+def normalize_digits(name: str) -> str:
+    """Replace every digit with '#' (for logging/visibility of the pattern)."""
+    return DIGITS_RE.sub(lambda m: "#" * len(m.group(0)), name.rstrip("\r\n"))
+
+def pattern_key_from_segs_lens(segs, lens):
+    """
+    Key identifying the *pattern*, independent of the specific numbers.
+    Example: 'DESKTOP1234' and 'DESKTOP0001' share the same key.
+    """
+    return (tuple(segs), tuple(lens))
+
 # -------- emitters -----------------------------------------------------------
 def emit_range(segs, lens, bases, strides, fmts, start, count, stop_evt, out_q):
     """Emit [start, start+count) expansions to out_q, respecting stop_evt."""
@@ -72,11 +98,15 @@ def emit_range(segs, lens, bases, strides, fmts, start, count, stop_evt, out_q):
                 break
             vec[k] = 0
 
-def emit_sequential(name, max_line, stop_evt, out_q):
-    """Simple product expansion for small cases (no chunking)."""
+def emit_sequential(raw_line, max_line, stop_evt, out_q):
+    """
+    Simple sequential expansion for smaller cases (or when chunking not needed).
+    Respects --max-line cap.
+    """
+    name = raw_line.rstrip("\r\n")
     segs, lens = split_line(name)
     if not lens:
-        out_q.put(name.rstrip("\r\n") + "\n")
+        out_q.put(name + "\n")
         return
     bases, strides, fmts = make_bases_strides_fmts(lens)
     total = min(max_line, combos_count(lens))
@@ -112,10 +142,17 @@ def worker(in_q: mp.Queue, out_q: mp.Queue, stop_evt: mp.Event,
         if verbose and (t1 - t0) >= slow_thresh:
             sys.stderr.write(f"[slow] '{name_for_log}': chunk/line in {t1 - t0:.2f}s\n")
 
+    # let writer know this worker is done
     out_q.put(None)
 
 def writer(out_q: mp.Queue, out_path: Path, limit_bytes: int,
            stop_evt: mp.Event, workers: int, start_size: int, line_counter: mp.Value):
+    """
+    Single writer process:
+      - Appends lines to output file until reaching limit_bytes.
+      - Counts '\n' to derive 'lines appended' (includes raw originals).
+      - Receives 'None' sentinel once per worker to know when to exit.
+    """
     written = start_size
     done_markers = 0
     with out_path.open("ab", buffering=1024*1024) as fh:
@@ -145,15 +182,18 @@ def writer(out_q: mp.Queue, out_path: Path, limit_bytes: int,
 # -------- main ---------------------------------------------------------------
 def main():
     ap = argparse.ArgumentParser(
-        description="Parallel, streaming expansion of digit runs in names. "
-                    "Automatically splits huge per-line spaces into parallel chunks."
+        description=(
+            "Parallel, streaming expansion of digit runs in names. "
+            "Automatically splits huge per-line spaces into parallel chunks. "
+            "Deduplicates expansions by digit-run pattern while also emitting original lines."
+        )
     )
     ap.add_argument("-i","--input",  required=True, help="input file (one name per line)")
     ap.add_argument("-o","--output", required=True, help="output file (appends)")
     ap.add_argument("-L","--limit",  type=parse_size, default=parse_size("10G"),
-                    help="max output size (default 10G; K/M/G or bytes)")
+                    help="max output size (default 10G; accepts K/M/G or raw bytes)")
     ap.add_argument("-w","--workers", type=int, default=max(1, (os.cpu_count() or 1) - 1),
-                    help="worker processes (default CPU-1)")
+                    help="worker processes (default = CPU-1)")
     ap.add_argument("--max-line", type=int, default=1_000_000,
                     help="cap expansions per input line (default 1,000,000)")
     ap.add_argument("--chunk-threshold", type=int, default=1_000_000,
@@ -163,9 +203,15 @@ def main():
     ap.add_argument("--progress-every", type=int, default=0,
                     help="print progress every N input lines (default 0 = off)")
     ap.add_argument("-v","--verbose", action="store_true",
-                    help="log slow/chunking/truncation info to stderr")
+                    help="log slow/chunking/truncation/dedup info to stderr")
     ap.add_argument("--slow-threshold", type=float, default=3.0,
                     help="seconds to consider a unit 'slow' (default 3.0)")
+    # Behavior toggles (defaults ON):
+    ap.add_argument("--no-pattern-dedup", action="store_true",
+                    help="disable deduplication by digit-run pattern (expand duplicates too)")
+    ap.add_argument("--no-emit-originals", action="store_true",
+                    help="do not also emit each raw input line verbatim")
+
     args = ap.parse_args()
 
     in_path  = Path(args.input)
@@ -205,6 +251,7 @@ def main():
         workers.append(p)
 
     fed = 0  # input lines read
+    seen_patterns = set()
 
     try:
         # feeder: stream input, decide LINE vs CHUNK tasks
@@ -213,28 +260,67 @@ def main():
                 if stop_evt.is_set():
                     break
                 name = raw.rstrip("\r\n")
+
+                # 1) Always enqueue the exact original, unless user opted out.
+                if not args.no_emit_originals:
+                    out_q.put(name + "\n")
+
                 segs, lens = split_line(name)
+
+                # 2) If there are no digit runs, nothing to expand (original already emitted).
                 if not lens:
+                    fed += 1
+                    if args.progress_every and (fed % args.progress_every == 0):
+                        appended = line_counter.value
+                        elapsed = time.perf_counter() - t_start
+                        rate_in  = fed / elapsed if elapsed > 0 else 0.0
+                        rate_out = appended / elapsed if elapsed > 0 else 0.0
+                        sys.stderr.write(f"[=] progress: in={fed:,} out≈{appended:,} "
+                                         f"({rate_in:,.0f} in/s, {rate_out:,.0f} out/s)\n")
+                    continue
+
+                # 3) Deduplicate by pattern key (same segs + same digit-run lengths).
+                pkey = pattern_key_from_segs_lens(segs, lens)
+                if not args.no_pattern_dedup:
+                    if pkey in seen_patterns:
+                        if args.verbose:
+                            sys.stderr.write(f"[dedup] skip expansion for '{name}' "
+                                             f"(pattern {normalize_digits(name)})\n")
+                        fed += 1
+                        if args.progress_every and (fed % args.progress_every == 0):
+                            appended = line_counter.value
+                            elapsed = time.perf_counter() - t_start
+                            rate_in  = fed / elapsed if elapsed > 0 else 0.0
+                            rate_out = appended / elapsed if elapsed > 0 else 0.0
+                            sys.stderr.write(f"[=] progress: in={fed:,} out≈{appended:,} "
+                                             f"({rate_in:,.0f} in/s, {rate_out:,.0f} out/s)\n")
+                        continue
+                    seen_patterns.add(pkey)
+
+                # 4) Schedule one expansion job per unique pattern.
+                est = combos_count(lens)
+                if args.verbose and est > args.max_line:
+                    sys.stderr.write(f"[truncate] '{name}': combos≈{est:,} -> capped at {args.max_line:,}\n")
+
+                total_emit = min(est, args.max_line)
+
+                if total_emit < args.chunk_threshold or args.workers <= 1:
+                    # Use the LINE path (it recomputes segs/lens in the worker; simple and fine).
                     in_q.put(("LINE", raw, args.max_line))
                 else:
-                    est = combos_count(lens)
-                    if args.verbose and est > args.max_line:
-                        sys.stderr.write(f"[truncate] '{name}': combos≈{est:,} -> capped at {args.max_line:,}\n")
-                    total_emit = min(est, args.max_line)
-                    if total_emit < args.chunk_threshold or args.workers <= 1:
-                        in_q.put(("LINE", raw, args.max_line))
-                    else:
-                        bases, strides, fmts = make_bases_strides_fmts(lens)
-                        chunks = math.ceil(total_emit / args.chunk_size)
-                        if args.verbose:
-                            sys.stderr.write(f"[chunk] '{name}': total={total_emit:,}, chunks={chunks} (size≈{args.chunk_size:,})\n")
-                        start = 0
-                        remaining = total_emit
-                        while remaining > 0 and not stop_evt.is_set():
-                            this = min(args.chunk_size, remaining)
-                            in_q.put(("CHUNK", segs, lens, bases, strides, fmts, start, this, name))
-                            start += this
-                            remaining -= this
+                    bases, strides, fmts = make_bases_strides_fmts(lens)
+                    chunks = math.ceil(total_emit / args.chunk_size)
+                    if args.verbose:
+                        sys.stderr.write(f"[chunk] '{name}': total={total_emit:,}, "
+                                         f"chunks={chunks} (size≈{args.chunk_size:,}), "
+                                         f"pattern={normalize_digits(name)}\n")
+                    start = 0
+                    remaining = total_emit
+                    while remaining > 0 and not stop_evt.is_set():
+                        this = min(args.chunk_size, remaining)
+                        in_q.put(("CHUNK", segs, lens, bases, strides, fmts, start, this, name))
+                        start += this
+                        remaining -= this
 
                 fed += 1
                 if args.progress_every and (fed % args.progress_every == 0):
