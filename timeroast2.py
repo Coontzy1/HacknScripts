@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 # timeroast2.py — Timeroast with CUR/OLD (+ --both) and verbosity (-v / -vv)
 #
+
+# Do not use this 
+
 # python3 timeroast2.py 192.168.100.200 --both -v -o timeroast.log
 #
 # Hash output (unchanged; for hashcat -m 31300 with --username):
