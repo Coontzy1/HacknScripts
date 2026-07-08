@@ -1,5 +1,3 @@
-[2025-09-23 13:25:15] # cat smb_sysvol_probe2.py
-
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 

