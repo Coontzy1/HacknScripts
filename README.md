@@ -2,18 +2,18 @@
 
 Random pentest and lab scripts. Some are polished enough to reuse, some are quick helpers from real testing workflows.
 
-Most scripts are organized by category. A small number of root-level scripts are kept for existing blog/writeup links.
+Most scripts are organized by category. Root-level `parse_sysvol.py` and `link_gpo.py` are kept for existing TrustedSec blog links.
 
 ## Quick Index
 
 | Area | Script | What it does |
 | --- | --- | --- |
-| Network | `deCIDR.sh` / `network/deCIDR.sh` | Expands CIDR blocks, IP ranges, single IPs, and hostnames into `deCIDRd.out`. Uses `nmap -sL`. |
+| Network | `network/deCIDR.sh` | Expands CIDR blocks, IP ranges, single IPs, and hostnames into `deCIDRd.out`. Uses `nmap -sL`. |
 | Network | `network/superspoof.sh` | Uses Microsoft tenant/domain discovery, MX lookup, and Spoofy to check SPF/DMARC spoofability. |
-| AD/SYSVOL | `ad/sysvol/parse_sysvol.py` | Parses cloned SYSVOL GPO content for software installs, drive maps, scripts, and BloodHound correlation. |
+| AD/SYSVOL | `parse_sysvol.py` / `ad/sysvol/parse_sysvol.py` | Parses cloned SYSVOL GPO content for software installs, drive maps, scripts, and BloodHound correlation. |
 | AD/SYSVOL | `ad/sysvol/smb_sysvol_probe.py` | Authenticates over SMB and probes SYSVOL/Policies without relying on share listing. |
 | AD/SYSVOL | `ad/sysvol/machine_pwd_policy_probe.sh` | Uses manspider to pull SYSVOL policy files and summarize machine account password policy settings. |
-| AD/SYSVOL | `ad/sysvol/link_gpo.py` | Links a GPO to an OU over LDAPS when you have WriteGPLink rights; supports restore using saved gPLink. |
+| AD/SYSVOL | `link_gpo.py` / `ad/sysvol/link_gpo.py` | Links a GPO to an OU over LDAPS when you have WriteGPLink rights; supports restore using saved gPLink. |
 | AD/SYSVOL | `ad/sysvol/trust_comp_enum.py` | LDAP/LDAPS trust enumeration plus computer `pwdLastSet`/creation age checks. |
 | AD/WSUS | `ad/wsus/WSUSniff.py` | Sniffs HTTP WSUS traffic and logs servers, clients, and matched WSUS endpoints. |
 | AD/WSUS | `ad/wsus/wsuspider.sh` | Uses manspider and regpol to find WSUS registry policy settings in SYSVOL. |
@@ -25,13 +25,13 @@ Most scripts are organized by category. A small number of root-level scripts are
 | Remote Windows | `remote-windows/screenshotter_receive.sh` | Receives raw screenshot files over `nc` into `output_images/`. |
 | Remote Windows | `remote-windows/gimme_images.sh` | Receives base64 image blobs over `nc`, decodes them on Ctrl+C, and writes `output_images/`. |
 | Remote Windows | `remote-windows/send_images.sh` | Test helper for sending local images to a listener. |
-| Lab | `newBoxScript.sh` / `lab/newBoxScript.sh` | Kali/qterminal/xdotool helper for fresh CTF-style box enumeration. |
+| Lab | `lab/newBoxScript.sh` | Kali/qterminal/xdotool helper for fresh CTF-style box enumeration. |
 
 ## Examples
 
 ```bash
 # Expand CIDRs/ranges/hosts into deCIDRd.out
-bash deCIDR.sh targets.txt
+bash network/deCIDR.sh targets.txt
 
 # Check spoofability for a domain
 bash network/superspoof.sh example.com
@@ -93,7 +93,7 @@ Expect some benign hits for private-range example IPs in usage text.
 
 ## Layout
 
-Root keeps `deCIDR.sh` and `newBoxScript.sh` for older blog/writeup links. The categorized copies are the canonical organization for the rest of the collection.
+Root keeps `parse_sysvol.py` and `link_gpo.py` for the TrustedSec blog links. The categorized copies are the canonical organization for the rest of the collection.
 
 ```text
 network/
